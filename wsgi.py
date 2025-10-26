@@ -1,16 +1,19 @@
 import os
-# import initialization helpers and the Flask app
-from app import app, init_db, load_or_train_model, seed_db_if_empty, STATIC_DIR, WC_DIR
+import importlib
+
+# import the app module so we can set module-level MODEL variable
+app_module = importlib.import_module('app')
+app = app_module.app
 
 # ensure static and wordcloud dirs exist
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(WC_DIR, exist_ok=True)
+os.makedirs(app_module.STATIC_DIR, exist_ok=True)
+os.makedirs(app_module.WC_DIR, exist_ok=True)
 
 # init database and model at import time so the WSGI server can use it
-init_db()
-# attach model to app module's MODEL variable
-app.MODEL = load_or_train_model()
-seed_db_if_empty()
+app_module.init_db()
+# set the module-level MODEL variable so routes using MODEL work
+app_module.MODEL = app_module.load_or_train_model()
+app_module.seed_db_if_empty()
 
 # Expose `app` for WSGI servers (waitress-serve will import this module and use `app`)
 
