@@ -1,0 +1,23 @@
+:root{
+  --bs-primary: #ffc8dd;
+  --bs-primary-rgb: 255,200,221;
+  --bs-secondary: #a2d2ff;
+  --bs-secondary-bg: #bce0ff;
+  --bs-tertiary-1: #c5aced;
+  --bs-tertiary-2: #f7abeb;
+}
+
+.btn-primary{
+  --bs-btn-bg: var(--bs-tertiary-2);
+  --bs-btn-border-color: var(--bs-primary);
+  --bs-btn-hover-bg: #ffb0cf;
+  --bs-btn-hover-border-color: #ffb0cf;
+  --bs-btn-active-bg: #ff97c1;
+  --bs-btn-active-border-color: #ff97c1;
+}
+
+.nav-pills .nav-link.active{
+  background-color: var(--bs-primary);
+}
+
+.card-title{ color: #333; }

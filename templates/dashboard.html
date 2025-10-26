@@ -1,0 +1,167 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard - Sentimen Ulasan Wisata{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="row g-3">
+    <div class="col-12 col-md-7">
+        <div class="row g-3">
+            <div class="col-12 card shadow-sm">
+              <div class="card-body">
+                <h5 class="card-title">Total Ulasan</h5>
+                <p class="display-6 m-0">{{ total }}</p>
+              </div>
+            </div>
+            <div class="col-12 card shadow-sm">
+              <div class="card-body">
+                <h5 class="card-title">Distribusi Sentimen (Jumlah)</h5>
+                <canvas id="barChart" height="120"></canvas>
+              </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-5">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Persentase Sentimen</h5>
+          <canvas id="pieChart" height="160"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Word Cloud - Positif</h5>
+          <img class="wc-img" src="{{ positif_wc }}" alt="Word Cloud Positif">
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Word Cloud - Negatif</h5>
+          <img class="wc-img" src="{{ negatif_wc }}" alt="Word Cloud Negatif">
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Word Cloud - Netral</h5>
+          <img class="wc-img" src="{{ netral_wc }}" alt="Word Cloud Netral">
+        </div>
+      </div>
+    </div>
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Ulasan per Lokasi</h5>
+          <div class="table-responsive">
+            <table class="table table-sm table-striped">
+              <thead>
+                <tr>
+                  <th>Lokasi</th>
+                  <th>Total</th>
+                  <th>Negatif</th>
+                  <th>Netral</th>
+                  <th>Positif</th>
+                  <th>Kesimpulan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in location_stats %}
+                <tr>
+                  <td>{{ row.location or '(tidak ada)' }}</td>
+                  <td>{{ row.total }}</td>
+                  <td>{{ row.negatif }}</td>
+                  <td>{{ row.netral }}</td>
+                  <td>{{ row.positif }}</td>
+                  <td>
+                    {% set mx = [row.negatif, row.netral, row.positif]|max %}
+                    {% if mx == row.negatif and mx > row.netral and mx > row.positif %}
+                      Negatif
+                    {% elif mx == row.positif and mx > row.negatif and mx > row.netral %}
+                      Positif
+                    {% else %}
+                      Netral
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Register the DataLabels plugin globally
+  if (window.Chart && window.ChartDataLabels) {
+    Chart.register(ChartDataLabels);
+  }
+  const barCtx = document.getElementById('barChart');
+  const pieCtx = document.getElementById('pieChart');
+  const barChart = new Chart(barCtx, {
+    type: 'bar',
+    data: {
+      labels: {{ bar_labels|tojson }},
+      datasets: [{
+        label: 'Jumlah',
+        data: {{ bar_values|tojson }},
+        backgroundColor: ['#f284b9', '#a2d2ff', '#95d5b2'],
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        datalabels: {
+          // Tampilkan angka di tengah batang
+          anchor: 'center',
+          align: 'center',
+          color: '#000',
+          font: { weight: '700' },
+          formatter: (value) => (typeof value === 'number' ? value : ''),
+          clip: true
+        }
+      },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+
+  const total = {{ total }} || 1;
+  const pieData = {{ bar_values|tojson }};
+  const pieChart = new Chart(pieCtx, {
+    type: 'pie',
+    data: {
+      labels: {{ bar_labels|tojson }},
+      datasets: [{
+        data: pieData,
+        backgroundColor: ['#ef476f', '#ffd166', '#06d6a0']
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: 'bottom' },
+        datalabels: {
+          color: '#222',
+          font: { weight: '600' },
+          formatter: (value, ctx) => {
+            try {
+              const data = ctx.chart.data.datasets[0].data || [];
+              const sum = data.reduce((a, b) => a + b, 0);
+              if (!sum) return '0%';
+              const pct = (value / sum) * 100;
+              return pct.toFixed(1) + '%';
+            } catch (e) {
+              return '';
+            }
+          }
+        }
+      }
+    }
+  });
+</script>
+{% endblock %}

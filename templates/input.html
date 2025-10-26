@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% block title %}Input Ulasan - Sentimen Ulasan Wisata{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="row justify-content-center">
+    <div class="col-12 col-lg-8">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title mb-3">Analisis Sentimen Ulasan</h5>
+          <form method="POST" id="ulasan-form">
+            <div class="mb-3">
+              <label for="ulasan" class="form-label">Tulis Ulasan Wisata</label>
+              <textarea class="form-control" id="ulasan" name="ulasan" rows="5" placeholder="Contoh: Tempatnya bagus banget, pemandangannya keren..." required>{{ ulasan or '' }}</textarea>
+            </div>
+            <div class="mb-3">
+              <label for="location" class="form-label">Lokasi (autocomplete)</label>
+              <input list="location-list" id="location" name="location" class="form-control" placeholder="Ketik nama lokasi..." value="{{ location or '' }}">
+              <datalist id="location-list"></datalist>
+              <div class="form-text">Pilih lokasi yang ada atau masukkan lokasi baru untuk menambah ke database.</div>
+            </div>
+            <button type="submit" class="btn btn-primary">Analisis</button>
+          </form>
+          {% if result %}
+          <hr>
+          <div class="alert alert-info mt-3">
+            Hasil sentimen: <strong class="text-uppercase">{{ result }}</strong>
+            {% if proba is not none %}
+              <div class="small text-muted">Kepercayaan model: {{ (proba*100)|round(1) }}%</div>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row justify-content-center">
+    <div class="col-12">
+      <!-- Reviews table -->
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <h5 class="card-title mb-3">Daftar Ulasan</h5>
+          <div class="row mb-2">
+            <div class="col-6 col-md-4 mb-2">
+              <input id="filter-location" class="form-control" placeholder="Filter lokasi (kosong=semua)">
+            </div>
+            <div class="col-6 col-md-4 mb-2">
+              <select id="per-page" class="form-select">
+                <option value="5">5 / halaman</option>
+                <option value="10" selected>10 / halaman</option>
+                <option value="25">25 / halaman</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-striped" id="reviews-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Tanggal</th>
+                  <th>Lokasi</th>
+                  <th>Sentimen</th>
+                  <th>Ulasan</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <nav>
+            <ul class="pagination" id="reviews-pagination"></ul>
+          </nav>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Autocomplete for location using datalist and /api/locations
+const locationInput = document.getElementById('location');
+const locationList = document.getElementById('location-list');
+let lastQ = '';
+locationInput && locationInput.addEventListener('input', async (e) => {
+  const q = e.target.value.trim();
+  if (q === lastQ) return;
+  lastQ = q;
+  try {
+    const res = await fetch('/api/locations?q=' + encodeURIComponent(q));
+    if (!res.ok) return;
+    const arr = await res.json();
+    locationList.innerHTML = '';
+    arr.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      locationList.appendChild(opt);
+    });
+  } catch (err) {
+    // ignore
+  }
+});
+
+// Reviews table with pagination and filtering
+const reviewsTableBody = document.querySelector('#reviews-table tbody');
+const paginationEl = document.getElementById('reviews-pagination');
+const perPageSelect = document.getElementById('per-page');
+const filterLocation = document.getElementById('filter-location');
+let currentPage = 1;
+
+async function loadReviews(page=1) {
+  const per_page = perPageSelect.value || 10;
+  const location = filterLocation.value || '';
+  const url = `/api/reviews?page=${page}&per_page=${per_page}&location=${encodeURIComponent(location)}`;
+  const res = await fetch(url);
+  if (!res.ok) return;
+  const data = await res.json();
+  reviewsTableBody.innerHTML = '';
+  data.items.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.id}</td><td>${r.created_at}</td><td>${r.location||''}</td><td>${r.sentiment}</td><td>${(r.text||'').slice(0,120)}</td>`;
+    reviewsTableBody.appendChild(tr);
+  });
+  renderPagination(data.page, data.pages);
+}
+
+function renderPagination(page, pages) {
+  currentPage = page;
+  paginationEl.innerHTML = '';
+  // short pagination: show first, prev, 2 before/after, next, last
+  const makeLi = (label, p, disabled=false, active=false) => {
+    const li = document.createElement('li');
+    li.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+    const a = document.createElement('a');
+    a.className = 'page-link';
+    a.href = '#';
+    a.textContent = label;
+    a.addEventListener('click', (e) => { e.preventDefault(); if (!disabled) loadReviews(p); });
+    li.appendChild(a);
+    return li;
+  };
+  paginationEl.appendChild(makeLi('«', 1, page===1));
+  paginationEl.appendChild(makeLi('‹', Math.max(1, page-1), page===1));
+  for (let p = Math.max(1, page-2); p <= Math.min(pages, page+2); p++) {
+    paginationEl.appendChild(makeLi(p, p, false, p===page));
+  }
+  paginationEl.appendChild(makeLi('›', Math.min(pages, page+1), page===pages));
+  paginationEl.appendChild(makeLi('»', pages, page===pages));
+}
+
+perPageSelect.addEventListener('change', () => loadReviews(1));
+filterLocation.addEventListener('change', () => loadReviews(1));
+// initial load
+loadReviews(1);
+</script>
+{% endblock %}
