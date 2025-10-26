@@ -1,7 +1,9 @@
 import os
 import sqlite3
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 import joblib
 
@@ -58,6 +60,14 @@ def init_db():
                name TEXT NOT NULL UNIQUE
            )'''
     )
+    # create users table for simple auth
+    cur.execute(
+        '''CREATE TABLE IF NOT EXISTS users (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               username TEXT NOT NULL UNIQUE,
+               password_hash TEXT NOT NULL
+           )'''
+    )
     conn.commit()
     conn.close()
 
@@ -104,6 +114,19 @@ def seed_db_if_empty():
         rows = [(row['ulasan'], row['label'], datetime.utcnow().isoformat(), '') for _, row in df.iterrows()]
         cur.executemany('INSERT INTO reviews (text, sentiment, created_at, location) VALUES (?, ?, ?, ?)', rows)
         conn.commit()
+    # ensure there's at least one admin user (from env or default)
+    cur.execute("SELECT COUNT(*) as c FROM users")
+    uc = cur.fetchone()['c']
+    if uc == 0:
+        admin_user = os.environ.get('ADMIN_USER', 'admin')
+        admin_pass = os.environ.get('ADMIN_PASS', 'admin')
+        pw_hash = generate_password_hash(admin_pass)
+        try:
+            cur.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (admin_user, pw_hash))
+            conn.commit()
+            print(f"Created default admin user: {admin_user}")
+        except Exception:
+            pass
     conn.close()
 
 
@@ -141,7 +164,43 @@ def get_stats():
     return total, counts, texts, location_stats
 
 
+def create_user(username, password):
+    conn = get_db()
+    cur = conn.cursor()
+    pw_hash = generate_password_hash(password)
+    try:
+        cur.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, pw_hash))
+        conn.commit()
+    except Exception:
+        pass
+    conn.close()
+
+
+def verify_user(username, password):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT password_hash FROM users WHERE username=?', (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return False
+    try:
+        return check_password_hash(row['password_hash'], password)
+    except Exception:
+        return False
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user' not in session:
+            return redirect(url_for('login', next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+
 @app.route('/')
+@login_required
 def dashboard():
     total, counts, texts, location_stats = get_stats()
     # Generate wordclouds
@@ -164,6 +223,7 @@ def dashboard():
 
 
 @app.route('/input', methods=['GET', 'POST'])
+@login_required
 def input_ulasan():
     result = None
     proba = None
@@ -204,7 +264,38 @@ def input_ulasan():
     return render_template('input.html', result=result, proba=proba, ulasan=ulasan, location=location)
 
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    # if already logged in, don't allow access to login page
+    if session.get('user'):
+        return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        next_url = request.args.get('next') or url_for('dashboard')
+        if not username or not password:
+            flash('Masukkan username dan password.', 'warning')
+            return redirect(url_for('login'))
+        if verify_user(username, password):
+            session['user'] = username
+            flash('Berhasil login.', 'success')
+            return redirect(next_url)
+        else:
+            flash('Username atau password salah.', 'danger')
+            return redirect(url_for('login'))
+    # GET
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    flash('Logout berhasil.', 'info')
+    return redirect(url_for('login'))
+
+
 @app.route('/api/locations')
+@login_required
 def api_locations():
     q = request.args.get('q', '').strip()
     conn = get_db()
@@ -219,6 +310,7 @@ def api_locations():
 
 
 @app.route('/api/reviews')
+@login_required
 def api_reviews():
     # paginated reviews for input page table
     try:

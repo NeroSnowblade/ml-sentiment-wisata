@@ -15,11 +15,13 @@
     .sidebar .nav-link { color: #222; font-weight: 600; }
     .sidebar .nav-link.active { color: #5f5699; font-weight: bold; }
     .main { margin-left: 260px; padding: 1.25rem; }
+    .main.no-sidebar { margin-left: 0; padding: 1.25rem; }
     .brand { font-weight: 800; letter-spacing: 0.5px; }
     .wc-img { width: 100%; height: auto; border: 1px solid #eee; border-radius: .5rem; }
   </style>
 </head>
 <body>
+  {% if session.get('user') %}
   <div class="sidebar d-flex flex-column p-3">
     <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
       <span class="fs-4 brand">Sentimen Wisata</span>
@@ -34,9 +36,18 @@
       </li>
     </ul>
     <hr>
-    <div class="text-muted small">v1.0</div>
+    <div class="text-sm mt-2">
+      <div class="mb-2">Masuk sebagai <strong>{{ session.get('user') }}</strong></div>
+      <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-dark">Logout</a>
+      <div class="text-muted small mt-2">v1.0</div>
+    </div>
   </div>
-  <main class="main">
+  {% else %}
+  <div class="d-flex justify-content-end p-2">
+    <a href="{{ url_for('login') }}" class="btn btn-sm btn-outline-primary">Login</a>
+  </div>
+  {% endif %}
+  <main class="main {% if not session.get('user') %}no-sidebar{% endif %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
