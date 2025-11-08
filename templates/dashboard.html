@@ -315,11 +315,23 @@
         sel.addEventListener('change', function (ev) {
           const val = ev.target.value;
           if (val === '__all__') {
-            initAll();
+            // Explicitly restore the charts to the overall dataset values
+            try {
+              // use copies to avoid accidental mutation
+              barChart.data.datasets[0].data = (allBarValues || []).slice();
+              barChart.data.labels = (allBarLabels || []).slice();
+              barChart.update();
+            } catch (e) { /* ignore */ }
+            try {
+              pieChart.data.datasets[0].data = (allBarValues || []).slice();
+              pieChart.data.labels = (allBarLabels || []).slice();
+              pieChart.update();
+            } catch (e) { /* ignore */ }
             // revert images to defaults
             wcPos.src = defaultImages.positif;
             wcNeg.src = defaultImages.negatif;
             wcNet.src = defaultImages.netral;
+            // keep the global accuracy card unchanged (it was set on init)
             return;
           }
           const found = locationStats.find(x => (x.location || '').toString() === val.toString());
