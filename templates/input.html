@@ -13,12 +13,19 @@
               <textarea class="form-control" id="ulasan" name="ulasan" rows="5" placeholder="Contoh: Tempatnya bagus banget, pemandangannya keren..." required>{{ ulasan or '' }}</textarea>
             </div>
             <div class="mb-3">
-              <label for="location" class="form-label">Lokasi (autocomplete)</label>
-              <input list="location-list" id="location" name="location" class="form-control" placeholder="Ketik nama lokasi..." value="{{ location or '' }}">
-              <datalist id="location-list"></datalist>
-              <div class="form-text">Pilih lokasi yang ada atau masukkan lokasi baru untuk menambah ke database.</div>
+              <label for="location" class="form-label">Lokasi</label>
+              <div class="input-group">
+                <!-- Single select which submits as 'location' field. Options are loaded via AJAX from /api/locations. -->
+                <select id="location-select" name="location" class="form-select me-2" aria-label="Pilih lokasi">
+                  <option value="">-- Pilih lokasi --</option>
+                  {% if location %}
+                  <option selected value="{{ location }}">{{ location }}</option>
+                  {% endif %}
+                </select>
+              </div>
+              <div class="form-text">Pilih lokasi yang ada atau ketik nama baru (baru akan dibuat saat disubmit).</div>
             </div>
-            <button type="submit" class="btn btn-primary">Analisis</button>
+            <button type="submit" class="btn btn-dark text-white">Analisis</button>
           </form>
           {% if result %}
           <hr>
@@ -41,7 +48,12 @@
           <h5 class="card-title mb-3">Daftar Ulasan</h5>
           <div class="row mb-2">
             <div class="col-6 col-md-4 mb-2">
-              <input id="filter-location" class="form-control" placeholder="Filter lokasi (kosong=semua)">
+              <div class="input-group">
+                <!-- Filter select (Select2 AJAX). Empty option allows 'all' -->
+                <select id="filter-location-select" class="form-select me-2">
+                  <option value="">Semua lokasi</option>
+                </select>
+              </div>
             </div>
             <div class="col-6 col-md-4 mb-2">
               <select id="per-page" class="form-select">
@@ -60,6 +72,7 @@
                   <th>Lokasi</th>
                   <th>Sentimen</th>
                   <th>Ulasan</th>
+                  <th>Akurasi</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -75,39 +88,77 @@
 </div>
 
 <script>
-// Autocomplete for location using datalist and /api/locations
-const locationInput = document.getElementById('location');
-const locationList = document.getElementById('location-list');
-let lastQ = '';
-locationInput && locationInput.addEventListener('input', async (e) => {
-  const q = e.target.value.trim();
-  if (q === lastQ) return;
-  lastQ = q;
-  try {
-    const res = await fetch('/api/locations?q=' + encodeURIComponent(q));
-    if (!res.ok) return;
-    const arr = await res.json();
-    locationList.innerHTML = '';
-    arr.forEach(name => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      locationList.appendChild(opt);
-    });
-  } catch (err) {
-    // ignore
-  }
-});
+// Location select uses Select2 + AJAX for autocomplete (no datalist needed)
+
+// Initialize Select2 for location select (searchable + creatable via tags), using AJAX to read from /api/locations
+const locationSelect = document.getElementById('location-select');
+try {
+  $(locationSelect).select2({
+    placeholder: '-- Pilih lokasi --',
+    allowClear: true,
+    tags: true,
+    width: 'resolve',
+    ajax: {
+      url: '/api/locations',
+      dataType: 'json',
+      delay: 250,
+      data: function (params) { return { q: params.term || '' }; },
+      processResults: function (data) {
+        return { results: data.map(function(x){ return { id: x, text: x }; }) };
+      },
+      cache: true
+    },
+    createTag: function (params) {
+      return { id: params.term, text: params.term, newTag: true };
+    }
+  });
+  // if server provided an initial location value, ensure it's selected
+  {% if location %}
+  (function(){
+    const initVal = "{{ location }}";
+    if (initVal && !Array.from(locationSelect.options).some(o => o.value === initVal)) {
+      const opt = new Option(initVal, initVal, true, true);
+      locationSelect.add(opt);
+    }
+    $(locationSelect).val(initVal).trigger('change');
+  })();
+  {% endif %}
+} catch (err) {
+  // Select2 not available, select remains a plain select
+}
+
+// Initialize Select2 for filter select (searchable via AJAX)
+const filterSelect = document.getElementById('filter-location-select');
+try {
+  $(filterSelect).select2({
+    placeholder: 'Semua lokasi',
+    allowClear: true,
+    width: 'resolve',
+    ajax: {
+      url: '/api/locations',
+      dataType: 'json',
+      delay: 250,
+      data: function (params) { return { q: params.term || '' }; },
+      processResults: function (data) {
+        return { results: data.map(function(x){ return { id: x, text: x }; }) };
+      },
+      cache: true
+    }
+  });
+  $(filterSelect).on('change', function () { loadReviews(1); });
+} catch (err) {
+  // fallback: basic select onchange is handled below
+}
 
 // Reviews table with pagination and filtering
 const reviewsTableBody = document.querySelector('#reviews-table tbody');
 const paginationEl = document.getElementById('reviews-pagination');
 const perPageSelect = document.getElementById('per-page');
-const filterLocation = document.getElementById('filter-location');
 let currentPage = 1;
 
 async function loadReviews(page=1) {
   const per_page = perPageSelect.value || 10;
-  const location = filterLocation.value || '';
+  const location = (filterSelect && filterSelect.value) ? filterSelect.value : '';
   const url = `/api/reviews?page=${page}&per_page=${per_page}&location=${encodeURIComponent(location)}`;
   const res = await fetch(url);
   if (!res.ok) return;
@@ -115,7 +166,27 @@ async function loadReviews(page=1) {
   reviewsTableBody.innerHTML = '';
   data.items.forEach(r => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${r.id}</td><td>${r.created_at}</td><td>${r.location||''}</td><td>${r.sentiment}</td><td>${(r.text||'').slice(0,120)}</td>`;
+    // format date-only (no time). If created_at is ISO-like, parse it; otherwise show as-is
+    function fmtDateOnly(dt) {
+      if (!dt) return '';
+      try {
+        const d = new Date(dt);
+        if (!isNaN(d)) return d.toLocaleDateString('id-ID');
+      } catch (e) {}
+      // fallback: take first 10 chars
+      return dt.toString().slice(0,10);
+    }
+    const dateOnly = fmtDateOnly(r.created_at);
+    // accuracy: try r.accuracy, then r.proba (as fraction), then blank
+    let accText = '';
+    if (r.accuracy !== undefined && r.accuracy !== null) {
+      const av = Number(r.accuracy);
+      if (!isNaN(av)) accText = (av > 1 ? av : (av * 100)).toFixed(1) + '%';
+    } else if (r.proba !== undefined && r.proba !== null) {
+      const pv = Number(r.proba);
+      if (!isNaN(pv)) accText = (pv > 1 ? pv : (pv * 100)).toFixed(1) + '%';
+    }
+    tr.innerHTML = `<td>${r.id}</td><td>${dateOnly}</td><td>${r.location||''}</td><td>${r.sentiment}</td><td>${(r.text||'').slice(0,120)}</td><td>${accText}</td>`;
     reviewsTableBody.appendChild(tr);
   });
   renderPagination(data.page, data.pages);
@@ -146,7 +217,7 @@ function renderPagination(page, pages) {
 }
 
 perPageSelect.addEventListener('change', () => loadReviews(1));
-filterLocation.addEventListener('change', () => loadReviews(1));
+if (filterSelect) filterSelect.addEventListener('change', () => loadReviews(1));
 // initial load
 loadReviews(1);
 </script>

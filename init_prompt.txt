@@ -1,0 +1,15 @@
+Buatkan sebuah program website Python menggunakan Flask untuk menganalisis sentimen dari ulasan wisata apakah positif, negatif, atau netral. Buatlah program ini menggunakan metode Random Forest dengan scikit-learn. komentar yang diolah menggunakan Bahasa Indonesia, sertakan library pembantu yang dapat menganalisa bahasa apabila komentar tidak menggunakan bahasa baku seperti Slang, singkatan, atau campuran bahasa.
+
+Untuk tampilan websitenya, terdapat :
+Sidebar dengan menu Dashboard dan Input ulasan.
+Halaman dashboard menampilkan grafik distribusi sentimen ulasan wisata berupa :
+1. Total Ulasan.
+2. Diagram batang (bar chart) untuk jumlah ulasan positif, negatif, dan netral.
+3. Diagram lingkaran (pie chart) untuk persentase ulasan positif, negatif, dan netral.
+4. Diagram Word Cloud untuk kata-kata yang sering muncul dalam ulasan positif, negatif, dan netral.
+
+Halaman Input ulasan berisi form untuk memasukkan ulasan wisata dan tombol untuk menganalisis sentimen ulasan tersebut. Setelah dianalisis, hasil sentimen (positif, negatif, atau netral) ditampilkan di halaman yang sama.
+
+Buat desain website dengan bantuan framework CSS seperti Bootstrap agar tampilan menarik dan responsif. dan warna tema : primary color #ffc8dd
+secondary color #bce0ff #a2d2ff
+tertiary color #c5aced #f7abeb

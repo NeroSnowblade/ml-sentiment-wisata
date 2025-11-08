@@ -53,6 +53,17 @@ def init_db():
         except Exception:
             # ignore if cannot alter (older DBs) — best effort
             pass
+    # ensure 'proba' column exists to store model confidence, and 'accuracy' to store per-review correctness (0/1)
+    if 'proba' not in cols:
+        try:
+            cur.execute("ALTER TABLE reviews ADD COLUMN proba REAL")
+        except Exception:
+            pass
+    if 'accuracy' not in cols:
+        try:
+            cur.execute("ALTER TABLE reviews ADD COLUMN accuracy REAL")
+        except Exception:
+            pass
     # create locations table to store unique location names
     cur.execute(
         '''CREATE TABLE IF NOT EXISTS locations (
@@ -111,8 +122,32 @@ def seed_db_if_empty():
         dataset_path = os.path.join(DATA_DIR, 'ulasan_labeled.csv')
         df = pd.read_csv(dataset_path).dropna(subset=['ulasan', 'label'])
         # seed reviews with empty location
-        rows = [(row['ulasan'], row['label'], datetime.utcnow().isoformat(), '') for _, row in df.iterrows()]
-        cur.executemany('INSERT INTO reviews (text, sentiment, created_at, location) VALUES (?, ?, ?, ?)', rows)
+        rows = []
+        # If MODEL is available, compute model prediction/proba and whether it matches the label
+        for _, row in df.iterrows():
+            text = row['ulasan']
+            label = row['label']
+            created = datetime.utcnow().isoformat()
+            loc = ''
+            proba = None
+            acc = None
+            try:
+                if MODEL is not None:
+                    pred = MODEL.predict([text])[0]
+                    if hasattr(MODEL, 'predict_proba'):
+                        try:
+                            probas = MODEL.predict_proba([text])[0]
+                            classes = list(MODEL.classes_)
+                            proba_map = {classes[i]: float(probas[i]) for i in range(len(classes))}
+                            proba = proba_map.get(pred, None)
+                        except Exception:
+                            proba = None
+                    acc = 1.0 if pred == label else 0.0
+            except Exception:
+                proba = None
+                acc = None
+            rows.append((text, label, created, loc, proba, acc))
+        cur.executemany('INSERT INTO reviews (text, sentiment, created_at, location, proba, accuracy) VALUES (?, ?, ?, ?, ?, ?)', rows)
         conn.commit()
     # ensure there's at least one admin user (from env or default)
     cur.execute("SELECT COUNT(*) as c FROM users")
@@ -153,6 +188,9 @@ def get_stats():
           SUM(CASE WHEN sentiment='negatif' THEN 1 ELSE 0 END) as negatif,
           SUM(CASE WHEN sentiment='netral' THEN 1 ELSE 0 END) as netral,
           SUM(CASE WHEN sentiment='positif' THEN 1 ELSE 0 END) as positif
+                    , AVG(CASE WHEN accuracy IS NOT NULL THEN accuracy ELSE NULL END) as avg_accuracy
+                    , SUM(CASE WHEN accuracy IS NOT NULL THEN accuracy ELSE 0 END) as accuracy_sum
+                    , SUM(CASE WHEN accuracy IS NOT NULL THEN 1 ELSE 0 END) as accuracy_count
         FROM reviews
         GROUP BY COALESCE(location, '')
         ORDER BY total DESC
@@ -160,6 +198,26 @@ def get_stats():
     )
     location_rows = cur.fetchall()
     location_stats = [dict(r) for r in location_rows]
+    # Compute a convenient per-location accuracy percentage and labeled count so templates/JS can use it directly
+    for r in location_stats:
+        # avg_accuracy from SQL is stored as 0..1 (or possibly NULL). accuracy_sum/accuracy_count are raw sums and counts.
+        avg = r.get('avg_accuracy')
+        acc_sum = r.get('accuracy_sum')
+        acc_count = r.get('accuracy_count')
+        try:
+            if avg is not None:
+                # convert to percent 0..100
+                r['accuracy_pct'] = float(avg) * 100
+                r['labeled_count'] = int(acc_count or 0)
+            elif acc_sum is not None and acc_count and int(acc_count) > 0:
+                r['accuracy_pct'] = (float(acc_sum) / int(acc_count)) * 100
+                r['labeled_count'] = int(acc_count)
+            else:
+                r['accuracy_pct'] = None
+                r['labeled_count'] = 0
+        except Exception:
+            r['accuracy_pct'] = None
+            r['labeled_count'] = 0
     conn.close()
     return total, counts, texts, location_stats
 
@@ -255,9 +313,10 @@ def input_ulasan():
                 cur.execute('INSERT OR IGNORE INTO locations (name) VALUES (?)', (location,))
             except Exception:
                 pass
+        # For user-submitted reviews we store model confidence (proba) but accuracy is unknown (NULL)
         cur.execute(
-            'INSERT INTO reviews (text, sentiment, created_at, location) VALUES (?, ?, ?, ?)',
-            (ulasan, result, datetime.utcnow().isoformat(), location or '')
+            'INSERT INTO reviews (text, sentiment, created_at, location, proba, accuracy) VALUES (?, ?, ?, ?, ?, ?)',
+            (ulasan, result, datetime.utcnow().isoformat(), location or '', proba, None)
         )
         conn.commit()
         conn.close()
@@ -328,11 +387,11 @@ def api_reviews():
     if location:
         cur.execute('SELECT COUNT(*) as c FROM reviews WHERE location=?', (location,))
         total = cur.fetchone()['c']
-        cur.execute('SELECT id, text, sentiment, created_at, location FROM reviews WHERE location=? ORDER BY created_at DESC LIMIT ? OFFSET ?', (location, per_page, offset))
+        cur.execute('SELECT id, text, sentiment, created_at, location, proba, accuracy FROM reviews WHERE location=? ORDER BY created_at DESC LIMIT ? OFFSET ?', (location, per_page, offset))
     else:
         cur.execute('SELECT COUNT(*) as c FROM reviews')
         total = cur.fetchone()['c']
-        cur.execute('SELECT id, text, sentiment, created_at, location FROM reviews ORDER BY created_at DESC LIMIT ? OFFSET ?', (per_page, offset))
+        cur.execute('SELECT id, text, sentiment, created_at, location, proba, accuracy FROM reviews ORDER BY created_at DESC LIMIT ? OFFSET ?', (per_page, offset))
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     pages = max(1, (total + per_page - 1) // per_page)

@@ -3,6 +3,27 @@
 {% block content %}
 <div class="container-fluid">
   <div class="row g-3">
+    <!-- Filter / Controls -->
+    <div class="col-12">
+      <div class="card shadow-sm mb-3">
+        <div class="card-body d-flex flex-column flex-md-row align-items-start gap-3">
+          <div>
+            <label for="locationFilter" class="form-label mb-1">Filter Lokasi</label>
+            <select id="locationFilter" class="form-select">
+              <option value="__all__">Semua Lokasi</option>
+              {% for row in location_stats %}
+              <option value="{{ row.location }}">{{ row.location or '(tidak ada)' }} ({{ row.total }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id="accuracyCard" class="ms-auto">
+            <label class="form-label mb-1">Akurasi Prediksi Keseluruhan</label>
+            <div class="h4 m-0" id="accuracyValue">-</div>
+            <small class="text-muted">(proporsi kelas mayoritas sebagai proxy akurasi)</small>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="col-12 col-md-7">
         <div class="row g-3">
             <div class="col-12 card shadow-sm">
@@ -31,7 +52,7 @@
       <div class="card shadow-sm">
         <div class="card-body">
           <h5 class="card-title">Word Cloud - Positif</h5>
-          <img class="wc-img" src="{{ positif_wc }}" alt="Word Cloud Positif">
+          <img id="wcPositif" class="wc-img" src="{{ positif_wc }}" alt="Word Cloud Positif">
         </div>
       </div>
     </div>
@@ -39,7 +60,7 @@
       <div class="card shadow-sm">
         <div class="card-body">
           <h5 class="card-title">Word Cloud - Negatif</h5>
-          <img class="wc-img" src="{{ negatif_wc }}" alt="Word Cloud Negatif">
+          <img id="wcNegatif" class="wc-img" src="{{ negatif_wc }}" alt="Word Cloud Negatif">
         </div>
       </div>
     </div>
@@ -47,7 +68,7 @@
       <div class="card shadow-sm">
         <div class="card-body">
           <h5 class="card-title">Word Cloud - Netral</h5>
-          <img class="wc-img" src="{{ netral_wc }}" alt="Word Cloud Netral">
+          <img id="wcNetral" class="wc-img" src="{{ netral_wc }}" alt="Word Cloud Netral">
         </div>
       </div>
     </div>
@@ -65,6 +86,7 @@
                   <th>Netral</th>
                   <th>Positif</th>
                   <th>Kesimpulan</th>
+                  <th>Akurasi (%)</th>
                 </tr>
               </thead>
               <tbody>
@@ -83,6 +105,21 @@
                       Positif
                     {% else %}
                       Netral
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.accuracy_pct is defined and row.accuracy_pct is not none %}
+                      {% if row.labeled_count and row.labeled_count > 0 %}
+                        {{ row.accuracy_pct|round(1) }}% ({{ row.labeled_count }} labeled)
+                      {% else %}
+                        {{ row.accuracy_pct|round(1) }}%
+                      {% endif %}
+                    {% else %}
+                      {% if row.total and row.total > 0 %}
+                        {{ (([row.negatif, row.netral, row.positif]|max / row.total) * 100)|round(1) }}%
+                      {% else %}
+                        0%
+                      {% endif %}
                     {% endif %}
                   </td>
                 </tr>
@@ -163,5 +200,140 @@
       }
     }
   });
+
+    // --- Dynamic filtering by lokasi ---
+    (function () {
+      try {
+        const locationStats = {{ location_stats|tojson }} || [];
+        const defaultImages = {
+          positif: {{ positif_wc|tojson }},
+          negatif: {{ negatif_wc|tojson }},
+          netral: {{ netral_wc|tojson }}
+        };
+        const allBarValues = {{ bar_values|tojson }} || [];
+        const allBarLabels = {{ bar_labels|tojson }} || [];
+
+        const sel = document.getElementById('locationFilter');
+        const wcPos = document.getElementById('wcPositif');
+        const wcNeg = document.getElementById('wcNegatif');
+        const wcNet = document.getElementById('wcNetral');
+        const accEl = document.getElementById('accuracyValue');
+
+        function computeAccuracy(s) {
+          // Return a structured object describing accuracy info.
+          // Prefer stored accuracy fields when available (avg_accuracy or accuracy_sum/accuracy_count).
+          try {
+            const out = { pct: 0, mx: null, total: 0, labeledCount: 0, labeledSum: 0, mode: 'proxy' };
+            // numeric helpers
+            const toNum = (v) => { const n = Number(v); return isNaN(n) ? null : n; };
+            const avg = toNum(s.avg_accuracy);
+            const sum = toNum(s.accuracy_sum);
+            const count = toNum(s.accuracy_count) || 0;
+            // if row provides avg_accuracy use it
+            if (avg !== null) {
+              out.pct = (avg > 1 ? avg : avg * 100);
+              out.mode = 'avg';
+              out.labeledCount = count;
+              out.labeledSum = sum || (avg * count);
+              out.total = Number(s.total || 0);
+              return out;
+            }
+            // if row provides accuracy_sum and accuracy_count use them
+            if (sum !== null && count > 0) {
+              const a = sum / count;
+              out.pct = (a > 1 ? a : a * 100);
+              out.mode = 'avg';
+              out.labeledCount = count;
+              out.labeledSum = sum;
+              out.total = Number(s.total || 0);
+              return out;
+            }
+          } catch (e) {
+            // fall through to proxy
+          }
+          // fallback: majority-class proxy
+          const n = Number(s.negatif || 0);
+          const nt = Number(s.netral || 0);
+          const p = Number(s.positif || 0);
+          const total = Number(s.total || (n + nt + p));
+          const mx = Math.max(n, nt, p);
+          const pct = total ? (mx / total) * 100 : 0;
+          return { pct, mx, total, mode: 'proxy' };
+        }
+
+        function applyStats(s) {
+          const arr = [Number(s.negatif || 0), Number(s.netral || 0), Number(s.positif || 0)];
+          // update bar and pie
+          try {
+            barChart.data.datasets[0].data = arr;
+            barChart.update();
+          } catch (e) { /* ignore */ }
+          try {
+            pieChart.data.datasets[0].data = arr;
+            pieChart.update();
+          } catch (e) { /* ignore */ }
+
+          // update wordcloud images (use per-location if present, else default)
+          if (s.positif_wc) wcPos.src = s.positif_wc; else wcPos.src = defaultImages.positif;
+          if (s.negatif_wc) wcNeg.src = s.negatif_wc; else wcNeg.src = defaultImages.negatif;
+          if (s.netral_wc) wcNet.src = s.netral_wc; else wcNet.src = defaultImages.netral;
+
+          // Note: do NOT update the global accuracy card here — it should remain the
+          // total accuracy for the whole dataset and must not change when the
+          // user selects a specific location. Per-location accuracy is intentionally
+          // not displayed in this card to keep it constant.
+        }
+
+        // initialize with overall values
+        (function initAll() {
+          try {
+            barChart.data.datasets[0].data = allBarValues;
+            barChart.data.labels = allBarLabels;
+            barChart.update();
+          } catch (e) {}
+          try {
+            pieChart.data.datasets[0].data = allBarValues;
+            pieChart.data.labels = allBarLabels;
+            pieChart.update();
+          } catch (e) {}
+          // calculate overall accuracy from aggregated location_stats if available
+          try {
+            const totalLabeled = (locationStats || []).reduce((a, b) => a + (Number(b.accuracy_count) || 0), 0);
+            const sumAccuracy = (locationStats || []).reduce((a, b) => a + (Number(b.accuracy_sum) || 0), 0);
+            if (totalLabeled > 0) {
+              const avg = sumAccuracy / totalLabeled;
+              accEl.textContent = (avg > 1 ? avg : avg * 100).toFixed(1) + '% (' + totalLabeled + ' labeled)';
+              return;
+            }
+          } catch (e) {}
+          // fallback: overall proxy using bar values
+          const sum = (allBarValues || []).reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+          const mx = Math.max(...(allBarValues || [0]));
+          accEl.textContent = ((mx / sum) * 100).toFixed(1) + '% (' + mx + '/' + sum + ')';
+        })();
+
+        sel.addEventListener('change', function (ev) {
+          const val = ev.target.value;
+          if (val === '__all__') {
+            initAll();
+            // revert images to defaults
+            wcPos.src = defaultImages.positif;
+            wcNeg.src = defaultImages.negatif;
+            wcNet.src = defaultImages.netral;
+            return;
+          }
+          const found = locationStats.find(x => (x.location || '').toString() === val.toString());
+          if (found) {
+            applyStats(found);
+          } else {
+            // fallback to all
+            initAll();
+          }
+        });
+      } catch (e) {
+        // console error but do not break page
+        // console.error('Filter init error', e);
+      }
+    })();
 </script>
 {% endblock %}
